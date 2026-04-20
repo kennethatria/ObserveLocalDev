@@ -1,21 +1,16 @@
 # secureLocalDev
 
-A behavioral observability sandbox for running AI coding agents on macOS and Linux. Built to provide developers with deep visibility into how AI-generated code or untrusted packages interact with their local system.
+A behavioral observability sandbox for applications built with AI coding agents on macOS and Linux. Built to provide developers with deep visibility into how their programs behave at runtime—syscalls, file access, and network connections—before shipping.
 
 ---
 
 ## The Philosophy: Runtime Transparency
 
-AI coding agents (Cursor, Copilot, Claude Code, etc.) operate as a "black box" that can silently:
+When you build software with the help of an AI coding agent, the resulting application can still behave in unexpected ways at runtime—regardless of how it was written. Without visibility into what your program actually does when it runs, you're flying blind.
 
-- Read SSH keys, AWS credentials, and environment variables
-- Make outbound network calls to unknown infrastructure
-- Spawn unexpected background processes
-- Install and execute compromised npm/pip packages
+`secureLocalDev` gives you that visibility. By running your application in a hardened gVisor sandbox, you get a high-fidelity audit trail of every syscall, file access, and network connection your program makes—so you can see exactly what it's doing before you ship it.
 
-`secureLocalDev` doesn't just "block" these actions—it **illuminates** them. By running your agent's code in a hardened gVisor sandbox, you get a high-fidelity audit trail of every syscall, file access, and network connection. 
-
-This project is built on the belief that for local development, **observability is the strongest form of security.** It helps you catch exploitation at runtime and deeply understand exactly what your tools are doing before you push code to GitHub.
+This project is built on the belief that for local development, **observability is the strongest form of security.** Catch unexpected behavior at runtime—file reads you didn't expect, outbound calls to unknown hosts, background processes—and understand your application's true behavior, not just its source code.
 
 ---
 
