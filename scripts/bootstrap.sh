@@ -20,7 +20,7 @@ fail()   { echo -e "${RED}  [fail]${RESET} $1"; failures+=("$1"); }
 # 1. Prompt for projects directory
 # ---------------------------------------------------------------------------
 echo ""
-echo -e "${BOLD}secureLocalDev — Bootstrap${RESET}"
+echo -e "${BOLD}observeLocalDev — Bootstrap${RESET}"
 echo "-----------------------------------------------"
 echo "This script installs all prerequisites and runs"
 echo "make setup automatically."
@@ -164,14 +164,14 @@ if [[ "$OS" == "Darwin" ]]; then
 
   REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
   SANDBOX_SNIPPET="
-# secureLocalDev — sandbox command
+# observeLocalDev — sandbox command
 sandbox() {
   PROJECT=\$(pwd) \\
   IMAGE=\${SANDBOX_IMAGE:-node:20-alpine} \\
   \"$REPO_DIR/scripts/run-agent.sh\" \"\$@\"
 }"
 
-  if grep -q "secureLocalDev — sandbox command" ~/.zshrc 2>/dev/null; then
+  if grep -q "observeLocalDev — sandbox command" ~/.zshrc 2>/dev/null; then
     skip "sandbox() already in ~/.zshrc"
   else
     if echo "$SANDBOX_SNIPPET" >> ~/.zshrc; then

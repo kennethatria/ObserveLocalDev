@@ -1,5 +1,5 @@
 <svg width="680" height="315" viewBox="0 0 680 315" xmlns="http://www.w3.org/2000/svg" role="img">
-  <title>secureLocalDev developer workflow</title>
+  <title>observeLocalDev developer workflow</title>
   <desc>Four-step loop: start watchtower once, AI edits code, run in sandbox, review dashboard, repeat</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
@@ -13,7 +13,7 @@
     </style>
   </defs>
 
-  <text class="th" fill="#444441" x="340" y="20" text-anchor="middle" dominant-baseline="central">How to use secureLocalDev</text>
+  <text class="th" fill="#444441" x="340" y="20" text-anchor="middle" dominant-baseline="central">How observeLocalDev works</text>
 
   <rect x="50"  y="40" width="130" height="190" rx="10" fill="#FAECE7" stroke="#993C1D" stroke-width="0.5"/>
   <text class="th" fill="#712B13" x="115" y="62"  text-anchor="middle" dominant-baseline="central">1. Start</text>

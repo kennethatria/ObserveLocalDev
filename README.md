@@ -1,4 +1,4 @@
-# secureLocalDev
+# observeLocalDev
 
 A behavioral observability sandbox for applications built with AI coding agents on macOS and Linux. Built to provide developers with deep visibility into how their programs behave at runtime—syscalls, file access, and network connections—before shipping.
 
@@ -10,7 +10,7 @@ When you build software with the help of an AI coding agent, the resulting appli
 
 Local dev is a blind spot. Without visibility into what your program actually does when it executes on your laptop, your machine is exposed before any security tooling ever sees it.
 
-`secureLocalDev` reduces that risk window. By running your application in a hardened gVisor sandbox, you get a high-fidelity audit trail of every syscall, file access, and network connection your program makes—the same kind of observability controls typically reserved for cloud and production environments, brought to your local dev machine.
+`observeLocalDev` reduces that risk window. By running your application in a hardened gVisor sandbox, you get a high-fidelity audit trail of every syscall, file access, and network connection your program makes—the same kind of observability controls typically reserved for cloud and production environments, brought to your local dev machine.
 
 This project is built on the belief that for local development, **observability is the strongest form of security.**
 
@@ -67,8 +67,8 @@ On Linux, Podman and gVisor run directly on the host with no VM needed. Falco wo
 ```bash
 mkdir -p ~/Projects
 cd ~/Projects
-git clone <repo> secureLocalDev
-cd secureLocalDev
+git clone <repo> observeLocalDev
+cd observeLocalDev
 ```
 
 **Step 2 — Bootstrap**
@@ -104,8 +104,8 @@ You should see syscall activity appear in the dashboard at `localhost:9999`.
 ```bash
 mkdir -p ~/Projects
 cd ~/Projects
-git clone <repo> secureLocalDev
-cd secureLocalDev
+git clone <repo> observeLocalDev
+cd observeLocalDev
 ```
 
 **Step 2 — Bootstrap**
@@ -172,7 +172,7 @@ Pass only the specific values your app needs — never mount your `.env` file di
 # Safe — pass individual values explicitly
 PROJECT=$(pwd) \
 IMAGE=node:20-alpine \
-~/Projects/secureLocalDev/scripts/run-agent.sh \
+~/Projects/observeLocalDev/scripts/run-agent.sh \
   env NODE_ENV=development PORT=3000 node index.js
 
 # Never do this
@@ -207,7 +207,7 @@ The sandbox mounts your project as writable so the AI agent can edit files direc
 
 ```bash
 # Start the watchtower first
-cd ~/Projects/secureLocalDev
+cd ~/Projects/observeLocalDev
 node dashboard/server.js &
 open http://localhost:9999
 
@@ -362,7 +362,7 @@ Shows live alerts, syscall activity, container events, and blocked network attem
 ## Project Structure
 
 ```
-secureLocalDev/
+observeLocalDev/
 ├── .mise.toml               # tool version pinning + task aliases
 ├── Makefile                 # make setup/run/watch/status/dashboard
 ├── ansible/
