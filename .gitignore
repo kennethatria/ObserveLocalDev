@@ -1,5 +1,6 @@
 .sandbox-pkg-hash
 .sandbox-py-hash
 .sandbox-go-hash
-node_modules/
+dashboard/node_modules/
+dashboard/.claude
 engineering

@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sandbox Security Dashboard</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #22263a;
+    --border: #2e3348;
+    --text: #e2e8f0;
+    --muted: #8892a4;
+    --critical: #f56565;
+    --critical-bg: rgba(245,101,101,0.12);
+    --critical-border: rgba(245,101,101,0.35);
+    --warning: #ecc94b;
+    --warning-bg: rgba(236,201,75,0.12);
+    --warning-border: rgba(236,201,75,0.35);
+    --info: #68d391;
+    --info-bg: rgba(104,211,145,0.12);
+    --info-border: rgba(104,211,145,0.3);
+    --network: #63b3ed;
+    --network-bg: rgba(99,179,237,0.12);
+    --success: #68d391;
+    --success-bg: rgba(104,211,145,0.12);
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    font-size: 13px;
+    min-height: 100vh;
+  }
+
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .header-left { display: flex; align-items: center; gap: 12px; }
+  .logo { font-size: 15px; font-weight: 600; color: var(--text); letter-spacing: -0.3px; }
+  .logo span { color: var(--critical); }
+
+  .status-pill {
+    display: flex; align-items: center; gap: 6px;
+    background: var(--surface2); border: 1px solid var(--border);
+    padding: 4px 10px; border-radius: 20px; font-size: 12px; color: var(--muted);
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: #4a5568; }
+  .dot.connected { background: var(--success); box-shadow: 0 0 6px var(--success); }
+
+  .header-right { display: flex; align-items: center; gap: 8px; }
+  .btn {
+    background: var(--surface2); border: 1px solid var(--border);
+    color: var(--muted); padding: 5px 12px; border-radius: 6px;
+    cursor: pointer; font-size: 12px; transition: all 0.15s;
+  }
+  .btn:hover { border-color: var(--network); color: var(--network); }
+
+  /* ── Stats row ── */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1px;
+    background: var(--border);
+    border-bottom: 1px solid var(--border);
+  }
+  .stat { background: var(--surface); padding: 16px 20px; }
+  .stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+  .stat-value { font-size: 28px; font-weight: 600; line-height: 1; }
+  .stat-value.critical  { color: var(--critical); }
+  .stat-value.warning   { color: var(--warning); }
+  .stat-value.info      { color: var(--info); }
+  .stat-value.network   { color: var(--network); }
+
+  /* ── Layout ── */
+  .main {
+    display: grid;
+    grid-template-columns: 1fr 340px;
+    gap: 0;
+    height: calc(100vh - 120px);
+  }
+
+  .panel {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .panel-header {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .panel-title { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; white-space: nowrap; }
+
+  /* ── Activity type filter tabs ── */
+  .filter-row { display: flex; gap: 4px; flex-wrap: wrap; }
+  .filter-btn {
+    font-size: 11px; padding: 3px 9px; border-radius: 4px;
+    border: 1px solid var(--border); background: transparent;
+    color: var(--muted); cursor: pointer; transition: all 0.15s;
+  }
+  .filter-btn:hover { color: var(--text); }
+  .filter-btn.active { background: var(--surface2); color: var(--text); border-color: var(--network); }
+  .filter-btn.active.file    { border-color: var(--info);     color: var(--info); }
+  .filter-btn.active.process { border-color: var(--warning);  color: var(--warning); }
+  .filter-btn.active.network { border-color: var(--network);  color: var(--network); }
+  .filter-btn.active.container { border-color: var(--muted);  color: var(--text); }
+
+  /* ── Alert feed ── */
+  .feed { flex: 1; overflow-y: auto; padding: 0; }
+  .feed::-webkit-scrollbar { width: 4px; }
+  .feed::-webkit-scrollbar-track { background: transparent; }
+  .feed::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .alert-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 16px;
+    border-bottom: 1px solid rgba(46,51,72,0.5);
+    transition: background 0.1s;
+    animation: slideIn 0.2s ease;
+  }
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .alert-item:hover { background: var(--surface2); }
+  .alert-item.CRITICAL { border-left: 3px solid var(--critical); }
+  .alert-item.WARNING  { border-left: 3px solid var(--warning); }
+  .alert-item.INFO     { border-left: 3px solid var(--info); }
+
+  /* ── Badges ── */
+  .alert-badge {
+    font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 3px;
+    flex-shrink: 0; margin-top: 1px; text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  .badge-CRITICAL { background: var(--critical-bg); color: var(--critical); border: 1px solid var(--critical-border); }
+  .badge-WARNING  { background: var(--warning-bg);  color: var(--warning);  border: 1px solid var(--warning-border); }
+  .badge-INFO     { background: var(--info-bg);     color: var(--info);     border: 1px solid var(--info-border); }
+
+  .alert-body { flex: 1; min-width: 0; }
+  .alert-rule   { font-size: 13px; font-weight: 500; color: var(--text); margin-bottom: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .alert-detail { font-size: 11px; color: var(--muted); font-family: 'SF Mono', 'Fira Code', monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .alert-time   { font-size: 10px; color: #4a5568; flex-shrink: 0; margin-top: 2px; }
+
+  .source-badge {
+    font-size: 10px; padding: 1px 5px; border-radius: 3px; flex-shrink: 0;
+    background: var(--surface2); border: 1px solid var(--border); color: var(--muted);
+    margin-top: 2px; text-transform: uppercase;
+  }
+  .source-falco  { border-color: rgba(99,179,237,0.4);  color: var(--network); }
+  .source-gvisor { border-color: rgba(104,211,145,0.4); color: var(--success); }
+  .source-podman { border-color: rgba(236,201,75,0.4);  color: var(--warning); }
+
+  /* ── Sidebar ── */
+  .sidebar {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--bg);
+  }
+
+  .sidebar-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border-bottom: 1px solid var(--border);
+    min-height: 0;
+  }
+
+  /* ── File access bars ── */
+  .bar-list { flex: 1; overflow-y: auto; padding: 8px 12px; display: flex; flex-direction: column; gap: 6px; }
+  .bar-row { display: flex; align-items: center; gap: 8px; }
+  .bar-name { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 11px; color: var(--muted); width: 110px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+  .bar-wrap { flex: 1; background: var(--surface2); border-radius: 2px; height: 6px; overflow: hidden; }
+  .bar-fill { height: 6px; border-radius: 2px; transition: width 0.4s ease; }
+  .bar-fill.critical { background: var(--critical); }
+  .bar-fill.warning  { background: var(--warning); }
+  .bar-fill.info     { background: var(--info); }
+  .bar-count { font-size: 11px; color: var(--muted); width: 24px; text-align: right; flex-shrink: 0; }
+
+  /* ── Process history ── */
+  .proc-list { flex: 1; overflow-y: auto; padding: 8px 12px; display: flex; flex-direction: column; gap: 4px; }
+  .proc-row {
+    display: flex; align-items: center; gap: 8px; padding: 5px 8px;
+    background: var(--surface); border-radius: 4px; border: 1px solid var(--border);
+    animation: slideIn 0.2s ease;
+  }
+  .proc-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  .proc-dot.critical { background: var(--critical); }
+  .proc-dot.warning  { background: var(--warning); }
+  .proc-dot.info     { background: var(--info); }
+  .proc-info { flex: 1; min-width: 0; }
+  .proc-name { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 11px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .proc-meta { font-size: 10px; color: var(--muted); }
+
+  /* ── Network attempts ── */
+  .net-list { flex: 1; overflow-y: auto; padding: 8px 12px; display: flex; flex-direction: column; gap: 4px; }
+  .net-row {
+    display: flex; align-items: center; gap: 8px; padding: 5px 8px;
+    background: var(--surface); border-radius: 4px; border: 1px solid var(--border);
+  }
+  .net-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  .net-dot.blocked { background: var(--critical); }
+  .net-dot.allowed { background: var(--info); }
+  .net-info { flex: 1; min-width: 0; }
+  .net-ip   { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 11px; color: var(--text); }
+  .net-dest { font-size: 10px; color: var(--muted); }
+  .net-badge { font-size: 10px; padding: 1px 6px; border-radius: 3px; flex-shrink: 0; font-weight: 600; }
+  .net-badge.blocked { background: var(--critical-bg); color: var(--critical); }
+  .net-badge.allowed { background: var(--info-bg);     color: var(--info); }
+
+  .empty-state { padding: 20px 16px; text-align: center; color: #4a5568; font-size: 11px; line-height: 1.5; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-left">
+    <div class="logo">Secure<span>Sandbox</span> Dashboard</div>
+    <div class="status-pill">
+      <span class="dot" id="ws-dot"></span>
+      <span id="ws-status">Connecting...</span>
+    </div>
+  </div>
+  <div class="header-right">
+    <button class="btn" onclick="clearFeed()">Clear</button>
+    <button class="btn" onclick="togglePause()" id="pause-btn">Pause</button>
+  </div>
+</header>
+
+<div class="stats">
+  <div class="stat">
+    <div class="stat-label">Critical alerts</div>
+    <div class="stat-value critical" id="s-attacks">0</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">File accesses</div>
+    <div class="stat-value info" id="s-files">0</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Network attempts</div>
+    <div class="stat-value network" id="s-network">0</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Container events</div>
+    <div class="stat-value warning" id="s-containers">0</div>
+  </div>
+</div>
+
+<div class="main">
+  <div class="panel">
+    <div class="panel-header">
+      <span class="panel-title">Live event feed</span>
+      <div class="filter-row">
+        <button class="filter-btn active" onclick="setFilter('ALL', this)">All</button>
+        <button class="filter-btn file"      onclick="setFilter('FILE', this)">File</button>
+        <button class="filter-btn process"   onclick="setFilter('PROCESS', this)">Process</button>
+        <button class="filter-btn network"   onclick="setFilter('NETWORK', this)">Network</button>
+        <button class="filter-btn container" onclick="setFilter('CONTAINER', this)">Container</button>
+      </div>
+    </div>
+    <div class="feed" id="alert-feed">
+      <div class="empty-state">Waiting for events&hellip;<br>Run a container to see activity appear here.</div>
+    </div>
+  </div>
+
+  <div class="sidebar">
+    <div class="sidebar-panel">
+      <div class="panel-header">
+        <span class="panel-title">File access</span>
+      </div>
+      <div class="bar-list" id="file-bars">
+        <div class="empty-state">No file activity yet</div>
+      </div>
+    </div>
+
+    <div class="sidebar-panel">
+      <div class="panel-header">
+        <span class="panel-title">Process history</span>
+      </div>
+      <div class="proc-list" id="proc-list">
+        <div class="empty-state">No processes spawned yet</div>
+      </div>
+    </div>
+
+    <div class="sidebar-panel" style="border-bottom:none;">
+      <div class="panel-header">
+        <span class="panel-title">Network attempts</span>
+      </div>
+      <div class="net-list" id="net-list">
+        <div class="empty-state">No network attempts</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+var counts = { attacks: 0, files: 0, network: 0, containers: 0 };
+var fileCounts = {};
+var paused = false;
+var currentFilter = 'ALL';
+var maxAlerts = 150;
+var ws;
+
+function getActivityType(alert) {
+  var rule = (alert.rule || '').toLowerCase();
+  var source = (alert.source || '').toLowerCase();
+  if (source === 'podman') return 'CONTAINER';
+  if (/network|connection|outbound|connect/.test(rule)) return 'NETWORK';
+  if (/execve|shell|spawn|package manager|process/.test(rule)) return 'PROCESS';
+  if (/openat|file|credential|read|write|environ|env/.test(rule)) return 'FILE';
+  return 'FILE'; // gVisor syscalls default to file category
+}
+
+function connect() {
+  ws = new WebSocket('ws://localhost:' + (window.location.port || 9999));
+
+  ws.onopen = function() {
+    document.getElementById('ws-dot').className = 'dot connected';
+    document.getElementById('ws-status').textContent = 'Live';
+  };
+
+  ws.onclose = function() {
+    document.getElementById('ws-dot').className = 'dot';
+    document.getElementById('ws-status').textContent = 'Reconnecting...';
+    setTimeout(connect, 2000);
+  };
+
+  ws.onmessage = function(e) {
+    if (paused) return;
+    try { handleAlert(JSON.parse(e.data)); } catch(err) {}
+  };
+}
+
+function formatTime(ts) {
+  try { return new Date(ts).toTimeString().slice(0, 8); }
+  catch(e) { return ts; }
+}
+
+function handleAlert(alert) {
+  var priority = (alert.priority || 'INFO').toUpperCase();
+  var type = getActivityType(alert);
+
+  if (priority === 'CRITICAL') {
+    counts.attacks++;
+    document.getElementById('s-attacks').textContent = counts.attacks;
+  }
+
+  if (type === 'FILE') {
+    counts.files++;
+    document.getElementById('s-files').textContent = counts.files;
+    updateFileBar(alert, priority);
+  }
+
+  if (type === 'NETWORK') {
+    counts.network++;
+    document.getElementById('s-network').textContent = counts.network;
+    addNetRow(alert);
+  }
+
+  if (type === 'CONTAINER') {
+    counts.containers++;
+    document.getElementById('s-containers').textContent = counts.containers;
+  }
+
+  if (type === 'PROCESS') {
+    addProcRow(alert, priority);
+  }
+
+  if (currentFilter === 'ALL' || currentFilter === type) {
+    addAlertRow(alert, priority);
+  }
+}
+
+function addAlertRow(alert, priority) {
+  var feed = document.getElementById('alert-feed');
+  var empty = feed.querySelector('.empty-state');
+  if (empty) empty.remove();
+
+  var item = document.createElement('div');
+  item.className = 'alert-item ' + priority;
+  item.setAttribute('data-type', getActivityType(alert));
+  item.innerHTML =
+    '<span class="alert-badge badge-' + priority + '">' + priority + '</span>' +
+    '<div class="alert-body">' +
+      '<div class="alert-rule">' + escHtml(alert.rule || 'Unknown') + '</div>' +
+      '<div class="alert-detail">' + escHtml((alert.detail || '').slice(0, 120)) + '</div>' +
+    '</div>' +
+    '<span class="source-badge source-' + (alert.source || 'system') + '">' + escHtml(alert.source || 'sys') + '</span>' +
+    '<span class="alert-time">' + formatTime(alert.time) + '</span>';
+
+  feed.insertBefore(item, feed.firstChild);
+  var items = feed.querySelectorAll('.alert-item');
+  if (items.length > maxAlerts) items[items.length - 1].remove();
+}
+
+function updateFileBar(alert, priority) {
+  var path = extractPath(alert.detail || '') || alert.rule || 'unknown';
+  var key = path.length > 22 ? '...' + path.slice(-19) : path;
+  var fullKey = path;
+
+  fileCounts[fullKey] = (fileCounts[fullKey] || 0) + 1;
+  var max = Math.max.apply(null, Object.values(fileCounts));
+  var container = document.getElementById('file-bars');
+
+  var empty = container.querySelector('.empty-state');
+  if (empty) empty.remove();
+
+  var safeKey = fullKey.replace(/[^a-zA-Z0-9]/g, '_');
+  var existing = container.querySelector('[data-key="' + safeKey + '"]');
+  if (existing) {
+    existing.querySelector('.bar-fill').style.width = Math.round((fileCounts[fullKey] / max) * 100) + '%';
+    existing.querySelector('.bar-count').textContent = fileCounts[fullKey];
+    Object.values(container.querySelectorAll('.bar-fill')).forEach(function(f) {
+      var k = f.closest('[data-key]').getAttribute('data-key');
+      var orig = Object.keys(fileCounts).find(function(x) { return x.replace(/[^a-zA-Z0-9]/g, '_') === k; });
+      if (orig) f.style.width = Math.round((fileCounts[orig] / max) * 100) + '%';
+    });
+  } else {
+    var colorClass = priority === 'CRITICAL' ? 'critical' : priority === 'WARNING' ? 'warning' : 'info';
+    var row = document.createElement('div');
+    row.className = 'bar-row';
+    row.setAttribute('data-key', safeKey);
+    row.innerHTML =
+      '<span class="bar-name" title="' + escHtml(fullKey) + '">' + escHtml(key) + '</span>' +
+      '<div class="bar-wrap"><div class="bar-fill ' + colorClass + '" style="width:' + Math.round((fileCounts[fullKey] / max) * 100) + '%"></div></div>' +
+      '<span class="bar-count">' + fileCounts[fullKey] + '</span>';
+    container.appendChild(row);
+  }
+}
+
+function addProcRow(alert, priority) {
+  var list = document.getElementById('proc-list');
+  var empty = list.querySelector('.empty-state');
+  if (empty) empty.remove();
+
+  var dotClass = priority === 'CRITICAL' ? 'critical' : priority === 'WARNING' ? 'warning' : 'info';
+  var row = document.createElement('div');
+  row.className = 'proc-row';
+  row.innerHTML =
+    '<span class="proc-dot ' + dotClass + '"></span>' +
+    '<div class="proc-info">' +
+      '<div class="proc-name">' + escHtml(alert.detail || alert.rule || 'unknown') + '</div>' +
+      '<div class="proc-meta">' + escHtml(alert.rule || '') + ' &middot; ' + formatTime(alert.time) + '</div>' +
+    '</div>';
+
+  list.insertBefore(row, list.firstChild);
+  var rows = list.querySelectorAll('.proc-row');
+  if (rows.length > 20) rows[rows.length - 1].remove();
+}
+
+function addNetRow(alert) {
+  var list = document.getElementById('net-list');
+  var empty = list.querySelector('.empty-state');
+  if (empty) empty.remove();
+
+  var isBlocked = /CRITICAL|WARNING/.test((alert.priority || '').toUpperCase());
+  var ip = extractIP(alert.detail || '') || 'unknown';
+
+  var row = document.createElement('div');
+  row.className = 'net-row';
+  row.innerHTML =
+    '<span class="net-dot ' + (isBlocked ? 'blocked' : 'allowed') + '"></span>' +
+    '<div class="net-info">' +
+      '<div class="net-ip">' + escHtml(ip) + '</div>' +
+      '<div class="net-dest">' + escHtml((alert.detail || '').slice(0, 40)) + '</div>' +
+    '</div>' +
+    '<span class="net-badge ' + (isBlocked ? 'blocked' : 'allowed') + '">' + (isBlocked ? 'BLOCKED' : 'ALLOWED') + '</span>';
+
+  list.insertBefore(row, list.firstChild);
+  if (list.children.length > 10) list.removeChild(list.lastChild);
+}
+
+function extractPath(str) {
+  var m = str.match(/\/[^\s"']+/);
+  return m ? m[0] : null;
+}
+
+function extractIP(str) {
+  var m = str.match(/(\d{1,3}\.){3}\d{1,3}/);
+  return m ? m[0] : null;
+}
+
+function escHtml(str) {
+  return String(str)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function clearFeed() {
+  document.getElementById('alert-feed').innerHTML  = '<div class="empty-state">Feed cleared. Waiting for events&hellip;</div>';
+  document.getElementById('file-bars').innerHTML   = '<div class="empty-state">No file activity yet</div>';
+  document.getElementById('proc-list').innerHTML   = '<div class="empty-state">No processes spawned yet</div>';
+  document.getElementById('net-list').innerHTML    = '<div class="empty-state">No network attempts</div>';
+  counts = { attacks: 0, files: 0, network: 0, containers: 0 };
+  fileCounts = {};
+  document.getElementById('s-attacks').textContent    = '0';
+  document.getElementById('s-files').textContent      = '0';
+  document.getElementById('s-network').textContent    = '0';
+  document.getElementById('s-containers').textContent = '0';
+}
+
+function togglePause() {
+  paused = !paused;
+  var btn = document.getElementById('pause-btn');
+  btn.textContent = paused ? 'Resume' : 'Pause';
+  btn.style.borderColor = paused ? 'var(--warning)' : '';
+  btn.style.color       = paused ? 'var(--warning)' : '';
+}
+
+function setFilter(f, btn) {
+  currentFilter = f;
+  document.querySelectorAll('.filter-btn').forEach(function(b) { b.classList.remove('active'); });
+  btn.classList.add('active');
+}
+
+connect();
+</script>
+</body>
+</html>
