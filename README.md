@@ -14,7 +14,7 @@ Local dev is a blind spot. Without visibility into what your program actually do
 
 The same observability controls typically reserved for cloud and production environments, brought to your local dev machine.
 
-This project is built on the belief that **developers deserve the same observability on their local machines that production environments take for granted.**
+This project is built on the belief that **developers deserve the same observability on their local machines.**
 
 ---
 
