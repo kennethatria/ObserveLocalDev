@@ -1,0 +1,24 @@
+[tools]
+node   = "20"
+python = "3.12"
+
+[env]
+SANDBOX_NAME = "dev-sandbox"
+LIMA_VM      = "podman"
+LOG_PATH     = "/var/log/runsc"
+
+[tasks.setup]
+description = "Build the entire sandbox from scratch"
+run         = "make setup"
+
+[tasks.watch]
+description = "Start the observability watchtower"
+run         = "make watch"
+
+[tasks.run]
+description = "Launch AI agent in sandbox"
+run         = "make run"
+
+[tasks.status]
+description = "Show sandbox status"
+run         = "make status"

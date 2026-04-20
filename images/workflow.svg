@@ -1,0 +1,51 @@
+<svg width="680" height="315" viewBox="0 0 680 315" xmlns="http://www.w3.org/2000/svg" role="img">
+  <title>secureLocalDev developer workflow</title>
+  <desc>Four-step loop: start watchtower once, AI edits code, run in sandbox, review dashboard, repeat</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="#888780" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <style>
+      text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .th  { font-size: 14px; font-weight: 500; }
+      .ts  { font-size: 12px; font-weight: 400; }
+      .arr { stroke: #888780; stroke-width: 1.5; fill: none; }
+    </style>
+  </defs>
+
+  <text class="th" fill="#444441" x="340" y="20" text-anchor="middle" dominant-baseline="central">How to use secureLocalDev</text>
+
+  <rect x="50"  y="40" width="130" height="190" rx="10" fill="#FAECE7" stroke="#993C1D" stroke-width="0.5"/>
+  <text class="th" fill="#712B13" x="115" y="62"  text-anchor="middle" dominant-baseline="central">1. Start</text>
+  <text class="ts" fill="#993C1D" x="115" y="88"  text-anchor="middle" dominant-baseline="central">node server.js</text>
+  <text class="ts" fill="#993C1D" x="115" y="106" text-anchor="middle" dominant-baseline="central">localhost:9999</text>
+  <text class="ts" fill="#993C1D" x="115" y="130" text-anchor="middle" dominant-baseline="central">once per session</text>
+
+  <line x1="181" y1="135" x2="199" y2="135" class="arr" marker-end="url(#arrow)"/>
+
+  <rect x="200" y="40" width="130" height="190" rx="10" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+  <text class="th" fill="#085041" x="265" y="62"  text-anchor="middle" dominant-baseline="central">2. AI edits</text>
+  <text class="ts" fill="#0F6E56" x="265" y="88"  text-anchor="middle" dominant-baseline="central">Claude Code</text>
+  <text class="ts" fill="#0F6E56" x="265" y="106" text-anchor="middle" dominant-baseline="central">edits your files</text>
+  <text class="ts" fill="#0F6E56" x="265" y="130" text-anchor="middle" dominant-baseline="central">no restart needed</text>
+
+  <line x1="331" y1="135" x2="349" y2="135" class="arr" marker-end="url(#arrow)"/>
+
+  <rect x="350" y="40" width="130" height="190" rx="10" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+  <text class="th" fill="#0C447C" x="415" y="62"  text-anchor="middle" dominant-baseline="central">3. Run sandbox</text>
+  <text class="ts" fill="#185FA5" x="415" y="88"  text-anchor="middle" dominant-baseline="central">sandbox npm test</text>
+  <text class="ts" fill="#185FA5" x="415" y="106" text-anchor="middle" dominant-baseline="central">files mounted :rw</text>
+  <text class="ts" fill="#185FA5" x="415" y="130" text-anchor="middle" dominant-baseline="central">syscalls logged</text>
+
+  <line x1="481" y1="135" x2="499" y2="135" class="arr" marker-end="url(#arrow)"/>
+
+  <rect x="500" y="40" width="130" height="190" rx="10" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
+  <text class="th" fill="#633806" x="565" y="62"  text-anchor="middle" dominant-baseline="central">4. Review</text>
+  <text class="ts" fill="#854F0B" x="565" y="88"  text-anchor="middle" dominant-baseline="central">safe → continue</text>
+  <text class="ts" fill="#854F0B" x="565" y="106" text-anchor="middle" dominant-baseline="central">alert → check</text>
+  <text class="ts" fill="#854F0B" x="565" y="130" text-anchor="middle" dominant-baseline="central">full audit trail</text>
+
+  <path d="M 565 231 L 565 272 L 265 272 L 265 231" class="arr" marker-end="url(#arrow)"/>
+  <text class="ts" fill="#888780" x="415" y="285" text-anchor="middle" dominant-baseline="central">repeat for every run</text>
+  <text class="ts" fill="#888780" x="340" y="306" text-anchor="middle" dominant-baseline="central">Code changes are live — only rebuild when dependencies change</text>
+</svg>

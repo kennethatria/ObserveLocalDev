@@ -1,0 +1,434 @@
+---
+- name: Setup secure dev sandbox
+  hosts: localhost
+  connection: local
+  gather_facts: true
+
+  vars:
+    is_macos: "{{ ansible_system == 'Darwin' }}"
+    is_linux: "{{ ansible_system == 'Linux' }}"
+    falco_rules_dir: /etc/falco/rules.d
+    falco_log_dir: /var/log/falco
+    runsc_log_dir: /var/log/runsc
+    dozzle_image: docker.io/amir20/dozzle:latest
+    dashboard_port: 9999
+    dozzle_port: 8888
+    # Only this directory (and /tmp/lima) is mounted into the Lima VM.
+    # Set to a parent that covers all projects you sandbox — never set to $HOME.
+    sandbox_projects_dir: "{{ ansible_env.HOME }}/Projects"
+
+  tasks:
+
+    # ─────────────────────────────────────────────
+    # OS detection
+    # ─────────────────────────────────────────────
+    - name: Show detected OS
+      debug:
+        msg: "Detected OS: {{ ansible_system }} — {{ 'macOS path (Lima + QEMU, Falco skipped)' if is_macos else 'Linux path (direct Podman + Falco)' }}"
+
+    # ─────────────────────────────────────────────
+    # macOS — Lima VM setup
+    # ─────────────────────────────────────────────
+    - name: "[macOS] Check Lima installed"
+      command: limactl --version
+      register: lima_version
+      changed_when: false
+      when: is_macos
+
+    - name: "[macOS] Show Lima version"
+      debug:
+        msg: "{{ lima_version.stdout }}"
+      when: is_macos
+
+    - name: "[macOS] Check VM status"
+      command: limactl list
+      register: lima_list
+      changed_when: false
+      when: is_macos
+
+    # Audit: catch existing VMs that mount $HOME (the insecure default from template:podman).
+    # If found, fail fast with clear remediation rather than silently continuing.
+    - name: "[macOS] Audit existing Lima VM mount config"
+      shell: |
+        config="{{ ansible_env.HOME }}/.lima/podman/lima.yaml"
+        if [ -f "$config" ] && grep -qE 'location:\s+"~"' "$config"; then
+          echo "INSECURE"
+        else
+          echo "OK"
+        fi
+      register: lima_mount_audit
+      changed_when: false
+      failed_when: false
+      when: is_macos
+
+    - name: "[macOS] Fail on insecure home mount"
+      fail:
+        msg: |
+          SECURITY: The Lima VM 'podman' is configured to mount your entire $HOME directory.
+          If gVisor is ever escaped, SSH keys, AWS credentials, and all user files are exposed.
+
+          Recreate the VM with restricted mounts:
+            limactl stop podman
+            limactl delete podman
+            make setup
+      when: >
+        is_macos and
+        lima_mount_audit.stdout is defined and
+        'INSECURE' in lima_mount_audit.stdout
+
+    - name: "[macOS] Create or start VM"
+      # Creates the VM with restricted mounts if it does not exist, otherwise starts it.
+      shell: |
+        if limactl list --format '{{ "{{" }}.Name{{ "}}" }}' 2>/dev/null | grep -q '^podman$'; then
+          if ! limactl list --format '{{ "{{" }}.Status{{ "}}" }}' 2>/dev/null | grep -q 'Running'; then
+            limactl start podman
+          fi
+        else
+          limactl start \
+            --vm-type qemu \
+            --name podman \
+            --set '.mounts = [{"location": "{{ sandbox_projects_dir }}", "writable": true}, {"location": "/tmp/lima", "writable": true}]' \
+            template:podman
+        fi
+      when: is_macos
+
+    - name: "[macOS] Wait for VM"
+      command: limactl shell podman -- echo ready
+      retries: 10
+      delay: 5
+      register: vm_ready
+      until: vm_ready.rc == 0
+      changed_when: false
+      when: is_macos
+
+    - name: "[macOS] Install runsc"
+      shell: |
+        limactl shell podman -- sudo bash -c \
+          'command -v runsc || (curl -fsSL https://storage.googleapis.com/gvisor/releases/release/latest/aarch64/runsc -o /tmp/runsc && install -m 755 /tmp/runsc /usr/bin/runsc)'
+      changed_when: false
+      when: is_macos
+
+    - name: "[macOS] Configure containers.conf"
+      shell: |
+        limactl shell podman -- sudo bash -c 'printf "[containers]\nlabel = false\ncgroup_manager = \"cgroupfs\"\n\n[engine]\nruntime = \"runsc\"\ncgroup_manager = \"cgroupfs\"\n\n[engine.runtimes]\nrunsc = [\"/usr/bin/runsc\", \"-ignore-cgroups\"]\n" > /etc/containers/containers.conf'
+      changed_when: false
+      when: is_macos
+
+    - name: "[macOS] Create log directories"
+      shell: limactl shell podman -- sudo mkdir -p {{ runsc_log_dir }}
+      changed_when: false
+      when: is_macos
+
+    - name: "[macOS] NOPASSWD sudo for podman"
+      shell: |
+        limactl shell podman -- sudo bash -c \
+          'echo "%sudo ALL=(ALL) NOPASSWD: /usr/bin/podman" > /etc/sudoers.d/sandbox-nopasswd && chmod 440 /etc/sudoers.d/sandbox-nopasswd'
+      changed_when: false
+      when: is_macos
+
+    - name: "[macOS] Persist socket permissions via systemd drop-in"
+      shell: |
+        limactl shell podman -- sudo bash -c \
+          'mkdir -p /etc/systemd/system/podman.socket.d && printf "[Socket]\nSocketMode=0666\n" > /etc/systemd/system/podman.socket.d/permissions.conf && systemctl daemon-reload'
+      changed_when: false
+      when: is_macos
+
+    - name: "[macOS] Enable Podman socket"
+      shell: limactl shell podman -- sudo systemctl enable --now podman.socket
+      changed_when: false
+      when: is_macos
+
+    - name: "[macOS] Start Dozzle"
+      shell: |
+        limactl shell podman -- sudo podman inspect dozzle > /dev/null 2>&1 || \
+        limactl shell podman -- sudo podman run -d \
+          --name dozzle \
+          --runtime crun \
+          --restart always \
+          -v /run/podman/podman.sock:/var/run/docker.sock:ro \
+          -p {{ dozzle_port }}:8080 \
+          {{ dozzle_image }}
+      changed_when: false
+      when: is_macos
+
+    - name: "[macOS] Test sandbox"
+      command: >
+        limactl shell podman -- sudo podman run --rm
+        --runtime runsc --user 1000:1000
+        --cap-drop ALL --security-opt no-new-privileges
+        --read-only --tmpfs /tmp --network none
+        alpine echo "sandbox ready"
+      register: macos_test
+      changed_when: false
+      when: is_macos
+
+    - name: "[macOS] Show test result"
+      debug:
+        msg: "{{ macos_test.stdout }}"
+      when: is_macos
+
+    # ─────────────────────────────────────────────
+    # Linux — direct setup
+    # ─────────────────────────────────────────────
+    - name: "[Linux] Install dependencies"
+      package:
+        name:
+          - curl
+          - podman
+          - nodejs
+          - npm
+        state: present
+      become: true
+      when: is_linux
+
+    - name: "[Linux] Install runsc"
+      shell: |
+        ARCH=$(uname -m)
+        command -v runsc || (
+          curl -fsSL https://storage.googleapis.com/gvisor/releases/release/latest/${ARCH}/runsc \
+            -o /tmp/runsc && install -m 755 /tmp/runsc /usr/bin/runsc
+        )
+      become: true
+      changed_when: false
+      when: is_linux
+
+    - name: "[Linux] Configure containers.conf"
+      copy:
+        dest: /etc/containers/containers.conf
+        content: |
+          [containers]
+          label = false
+          cgroup_manager = "cgroupfs"
+
+          [engine]
+          runtime = "runsc"
+          cgroup_manager = "cgroupfs"
+
+          [engine.runtimes]
+          runsc = ["/usr/bin/runsc", "-ignore-cgroups"]
+        mode: '0644'
+      become: true
+      when: is_linux
+
+    - name: "[Linux] Create log directories"
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      become: true
+      loop:
+        - "{{ runsc_log_dir }}"
+        - "{{ falco_log_dir }}"
+      when: is_linux
+
+    - name: "[Linux] Add Falco apt repo (Debian/Ubuntu)"
+      shell: |
+        curl -fsSL https://falco.org/repo/falcosecurity-packages.asc \
+          | gpg --dearmor -o /usr/share/keyrings/falco-archive-keyring.gpg
+        echo "deb [signed-by=/usr/share/keyrings/falco-archive-keyring.gpg] https://download.falco.org/packages/deb stable main" \
+          | tee /etc/apt/sources.list.d/falcosecurity.list
+        apt-get update -qq
+      become: true
+      changed_when: false
+      when: is_linux and ansible_pkg_mgr == 'apt'
+
+    - name: "[Linux] Install Falco (Debian/Ubuntu)"
+      apt:
+        name: falco
+        state: present
+        update_cache: false
+      become: true
+      when: is_linux and ansible_pkg_mgr == 'apt'
+      environment:
+        FALCO_FRONTEND: noninteractive
+        DEBIAN_FRONTEND: noninteractive
+
+    - name: "[Linux] Add Falco rpm repo (RHEL/Fedora)"
+      shell: |
+        rpm --import https://falco.org/repo/falcosecurity-packages.asc
+        curl -fsSL https://falco.org/repo/falcosecurity-rpm.repo \
+          -o /etc/yum.repos.d/falcosecurity.repo
+      become: true
+      changed_when: false
+      when: is_linux and ansible_pkg_mgr in ['dnf', 'yum']
+
+    - name: "[Linux] Install Falco (RHEL/Fedora)"
+      package:
+        name: falco
+        state: present
+      become: true
+      when: is_linux and ansible_pkg_mgr in ['dnf', 'yum']
+
+    - name: "[Linux] Create Falco AI agent rules"
+      copy:
+        dest: "{{ falco_rules_dir }}/ai-agent.yaml"
+        content: |
+          - rule: Read sensitive credentials
+            desc: Detect attempts to read credential files
+            condition: >
+              open_read and container and (
+                fd.name startswith /root/.ssh or
+                fd.name startswith /home/.ssh or
+                fd.name contains .aws/credentials or
+                fd.name contains .aws/config or
+                fd.name = /etc/shadow or
+                fd.name contains id_rsa or
+                fd.name contains id_ed25519
+              )
+            output: "Credential read attempt (file=%fd.name container=%container.name image=%container.image.repository)"
+            priority: CRITICAL
+            tags: [credentials, ai-agent]
+
+          - rule: Shell spawned in container
+            desc: Detect shell execution inside containers
+            condition: >
+              spawned_process and container and
+              proc.name in (sh, bash, zsh, ash, dash)
+            output: "Shell spawned in container (shell=%proc.name parent=%proc.pname container=%container.name)"
+            priority: CRITICAL
+            tags: [shell, ai-agent]
+
+          - rule: Package manager executed
+            desc: Detect runtime package installs
+            condition: >
+              spawned_process and container and
+              proc.name in (npm, pip, pip3, curl, wget, apt, apt-get, dnf, yum)
+            output: "Package manager or downloader executed (proc=%proc.name cmdline=%proc.cmdline container=%container.name)"
+            priority: WARNING
+            tags: [packages, ai-agent]
+
+          - rule: Read environment variables
+            desc: Detect reading of process environment
+            condition: >
+              open_read and container and
+              fd.name glob /proc/*/environ
+            output: "Env var exfiltration attempt (file=%fd.name container=%container.name)"
+            priority: CRITICAL
+            tags: [env, ai-agent]
+
+          - rule: Unexpected outbound connection
+            desc: Detect outbound network connections from containers
+            condition: >
+              outbound and container
+            output: "Outbound connection attempt (dest=%fd.rip:%fd.rport container=%container.name)"
+            priority: WARNING
+            tags: [network, ai-agent]
+        mode: '0644'
+      become: true
+      when: is_linux
+
+    - name: "[Linux] Configure Falco output"
+      copy:
+        dest: /etc/falco/config.d/output.yaml
+        content: |
+          json_output: true
+          json_include_output_property: true
+          log_level: info
+          priority: warning
+          file_output:
+            enabled: true
+            keep_alive: true
+            filename: /var/log/falco/falco.json
+        mode: '0644'
+      become: true
+      when: is_linux
+
+    - name: "[Linux] Enable and start Falco"
+      systemd:
+        name: falco
+        enabled: true
+        state: started
+      become: true
+      when: is_linux
+
+    - name: "[Linux] NOPASSWD sudo for podman"
+      copy:
+        dest: /etc/sudoers.d/sandbox-nopasswd
+        content: "%sudo ALL=(ALL) NOPASSWD: /usr/bin/podman\n"
+        mode: '0440'
+        validate: visudo -cf %s
+      become: true
+      when: is_linux
+
+    - name: "[Linux] Persist socket permissions via systemd drop-in"
+      file:
+        path: /etc/systemd/system/podman.socket.d
+        state: directory
+        mode: '0755'
+      become: true
+      when: is_linux
+
+    - name: "[Linux] Write socket SocketMode drop-in"
+      copy:
+        dest: /etc/systemd/system/podman.socket.d/permissions.conf
+        content: "[Socket]\nSocketMode=0666\n"
+        mode: '0644'
+      become: true
+      notify: reload systemd
+      when: is_linux
+
+    - name: "[Linux] Enable Podman socket"
+      systemd:
+        name: podman.socket
+        enabled: true
+        state: started
+        daemon_reload: true
+      become: true
+      when: is_linux
+
+    - name: "[Linux] Start Dozzle"
+      shell: |
+        podman inspect dozzle > /dev/null 2>&1 || \
+        podman run -d \
+          --name dozzle \
+          --runtime crun \
+          --restart always \
+          -v /run/podman/podman.sock:/var/run/docker.sock:ro \
+          -p {{ dozzle_port }}:8080 \
+          {{ dozzle_image }}
+      become: true
+      changed_when: false
+      when: is_linux
+
+    - name: "[Linux] Install dashboard dependencies"
+      shell: |
+        cd dashboard && npm install
+      changed_when: false
+      when: is_linux
+
+    - name: "[Linux] Start security dashboard"
+      shell: |
+        pkill -f "node dashboard/server.js" 2>/dev/null || true
+        nohup node dashboard/server.js > /var/log/dashboard.log 2>&1 &
+        echo $! > /var/run/dashboard.pid
+      changed_when: false
+      when: is_linux
+
+    - name: "[Linux] Test sandbox"
+      command: >
+        podman run --rm
+        --runtime runsc --user 1000:1000
+        --cap-drop ALL --security-opt no-new-privileges
+        --read-only --tmpfs /tmp --network none
+        alpine echo "sandbox ready"
+      register: linux_test
+      changed_when: false
+      become: true
+      when: is_linux
+
+    - name: "[Linux] Show test result"
+      debug:
+        msg: "{{ linux_test.stdout }}"
+      when: is_linux
+
+    # ─────────────────────────────────────────────
+    # Final summary
+    # ─────────────────────────────────────────────
+    - name: Setup complete
+      debug:
+        msg: |
+          ✓ Sandbox ready
+          ✓ gVisor syscall interception active
+          ✓ Dozzle logs: http://localhost:{{ dozzle_port }}
+          {{ '✓ Security dashboard: http://localhost:' + dashboard_port|string if is_linux else '- Falco: skipped (macOS — use gVisor strace instead)' }}
+          Run: make run CMD="echo hello"
