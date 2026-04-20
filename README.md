@@ -1,6 +1,6 @@
 # observeLocalDev
 
-A behavioral observability sandbox for applications built with AI coding agents on macOS and Linux. Built to provide developers with deep visibility into how their programs behave at runtime—syscalls, file access, and network connections—before shipping.
+An automated setup that wires together a collection of proven open-source tools to bring observability to your local dev environment. Built for developers who write software with the help of AI coding agents and want visibility into what their programs actually do at runtime—before pushing to GitHub.
 
 ---
 
@@ -10,9 +10,11 @@ When you build software with the help of an AI coding agent, the resulting appli
 
 Local dev is a blind spot. Without visibility into what your program actually does when it executes on your laptop, your machine is exposed before any security tooling ever sees it.
 
-`observeLocalDev` reduces that risk window. By running your application in a hardened gVisor sandbox, you get a high-fidelity audit trail of every syscall, file access, and network connection your program makes—the same kind of observability controls typically reserved for cloud and production environments, brought to your local dev machine.
+`observeLocalDev` is not an application — it's an automated setup that wires together a collection of proven open-source tools to give your local dev environment the observability it's missing. Once set up, it surfaces **indicators of unexpected behavior** — file paths accessed outside your project, outbound connections to unknown hosts, or processes your code shouldn't be spawning — so developers have concrete signals to investigate before pushing code.
 
-This project is built on the belief that for local development, **observability is the strongest form of security.**
+The same observability controls typically reserved for cloud and production environments, brought to your local dev machine.
+
+This project is built on the belief that **developers deserve the same observability on their local machines that production environments take for granted.**
 
 ---
 
