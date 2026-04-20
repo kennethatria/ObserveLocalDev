@@ -6,11 +6,13 @@ A behavioral observability sandbox for applications built with AI coding agents 
 
 ## The Philosophy: Runtime Transparency
 
-When you build software with the help of an AI coding agent, the resulting application can still behave in unexpected ways at runtime—regardless of how it was written. Without visibility into what your program actually does when it runs, you're flying blind.
+When you build software with the help of an AI coding agent, the resulting application can still behave in unexpected ways at runtime—regardless of how it was written. Developers typically catch these issues through CI/CD scans after pushing to GitHub, but by then it's too late: the code already ran on your local machine.
 
-`secureLocalDev` gives you that visibility. By running your application in a hardened gVisor sandbox, you get a high-fidelity audit trail of every syscall, file access, and network connection your program makes—so you can see exactly what it's doing before you ship it.
+Local dev is a blind spot. Without visibility into what your program actually does when it executes on your laptop, your machine is exposed before any security tooling ever sees it.
 
-This project is built on the belief that for local development, **observability is the strongest form of security.** Catch unexpected behavior at runtime—file reads you didn't expect, outbound calls to unknown hosts, background processes—and understand your application's true behavior, not just its source code.
+`secureLocalDev` reduces that risk window. By running your application in a hardened gVisor sandbox, you get a high-fidelity audit trail of every syscall, file access, and network connection your program makes—the same kind of observability controls typically reserved for cloud and production environments, brought to your local dev machine.
+
+This project is built on the belief that for local development, **observability is the strongest form of security.**
 
 ---
 
