@@ -1,20 +1,22 @@
 # observeLocalDev
 
-An automated setup that wires together a collection of proven open-source tools to bring observability to your local dev environment. Built for developers who write software with the help of AI coding agents and want visibility into what their programs actually do at runtime—before pushing to GitHub.
+An automated configuration that integrates proven open-source observability tools directly into your local workflow. Purpose-built for developers who use AI coding agents and need to see what their programs actually do at runtime—long before the first `git push`.
 
 ---
 
-## The Philosophy: Runtime Transparency
+## The Philosophy: Runtime Transparency for the AI Era
 
-When you build software with the help of an AI coding agent, the resulting application can still behave in unexpected ways at runtime—regardless of how it was written. Developers typically catch these issues through CI/CD scans after pushing to GitHub, but by then it's too late: the code already ran on your local machine.
+AI agents accelerate coding, but the code they help produce can introduce unexpected runtime behavior — unauthorized file access, outbound connections to unknown hosts, or processes your application shouldn't be spawning. Most developers rely on CI/CD to catch these issues, but by then the code has already executed on your local machine. Your laptop is the front line, yet it's often the least observed environment in the stack.
 
-Local dev is a blind spot. Without visibility into what your program actually does when it executes on your laptop, your machine is exposed before any security tooling ever sees it.
+`observeLocalDev` is not an application — it's the infrastructure your local machine is missing. It wires together a collection of proven open-source tools to surface **indicators of unexpected behavior** at runtime:
 
-`observeLocalDev` is not an application — it's an automated setup that wires together a collection of proven open-source tools to give your local dev environment the observability it's missing. Once set up, it surfaces **indicators of unexpected behavior** — file paths accessed outside your project, outbound connections to unknown hosts, or processes your code shouldn't be spawning — so developers have concrete signals to investigate before pushing code.
+- **File system:** paths accessed outside your project scope
+- **Network:** connections to unknown or unexpected hosts
+- **Processes:** unexpected sub-processes spawned at runtime
 
-The same observability controls typically reserved for cloud and production environments, brought to your local dev machine.
+Don't just trust what the agent wrote. Observe what it does when it runs.
 
-This project is built on the belief that **developers deserve the same observability on their local machines.**
+This project is built on the belief that **developers deserve the same observability on their local machines that production environments take for granted.**
 
 ---
 
