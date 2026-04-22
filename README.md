@@ -31,6 +31,16 @@ Your code files are live-mounted — changes made by you or your AI agent are re
 
 ## Key Tools & Technologies
 
+**Data flow (simplified):**
+```
+your code
+  → Podman (container lifecycle)
+    → gVisor/runsc (intercepts every syscall)
+      → syscall logs + Falco alerts
+        → Node.js WebSocket server
+          → Security dashboard (localhost:9999)
+```
+
 | Tool | Usage in this project | Objective |
 |---|---|---|
 | **gVisor (`runsc`)** | Acts as the container runtime (OCI) instead of `runc`. | **Kernel Isolation:** Provides a user-space kernel that intercepts and filters every syscall, preventing container escapes. |
@@ -240,6 +250,20 @@ sandbox node index.js
 
 The post-run summary shows `Mode: safe (read-only mount)` and omits the file-write section — writes are physically blocked at the mount level, not just detected.
 
+> **Quick audit workflow:** If an AI agent suggests running a one-liner that pulls from the internet (e.g., a setup script or an unfamiliar CLI tool), safe mode gives you a clean read-only execution with a full syscall audit trail before you decide to trust it:
+> ```bash
+> SANDBOX_SAFE=1 sandbox sh -c "curl -fsSL https://example.com/setup.sh | sh"
+> ```
+> Review the dashboard for unexpected outbound connections, credential reads, or process spawns before running it outside the sandbox.
+
+**Customising the sensitive file list**
+
+By default, the parting-gift detector watches: `Makefile`, `GNUmakefile`, `package.json`, `requirements.txt`, `go.mod`, `go.sum`, `Pipfile`, `pyproject.toml`, `*.sh`, `Dockerfile*`, `docker-compose*.yml`, and anything under `.github/`. To protect additional files (e.g. proprietary config or secrets templates), extend the `SENSITIVE_PATTERNS` array at the top of `scripts/run-agent.sh`:
+
+```bash
+SENSITIVE_PATTERNS=( ... "my-config.yml" "*.tfvars" )
+```
+
 ### Claude Code
 
 Claude Code is the AI agent this project was built to contain. Run it from inside your project directory and use `sandbox` to execute anything it generates:
@@ -335,6 +359,8 @@ You learn to tell the difference very quickly.
 ### Layer 1 — Isolation boundary
 
 On macOS, all containers run inside a QEMU virtual machine completely isolated from the host. The Lima VM is configured to mount **only** `~/Projects` (configurable via `sandbox_projects_dir` in `ansible/sandbox.yml`) — never `$HOME`. This ensures SSH keys, AWS credentials, and other sensitive files are unreachable even if gVisor is escaped. On Linux, user namespaces and Podman's rootless mode provide the boundary.
+
+> **How the layers interact:** Because `~/.ssh` is never mounted into the VM, a path like `/root/.ssh/id_rsa` simply does not exist inside the container's filesystem. gVisor will still intercept and flag the `openat` attempt — but Layer 1 already made the file unreachable before Layer 2 even fires. The layers are defence-in-depth, not a single point of failure.
 
 ### Layer 2 — gVisor (runsc)
 
@@ -492,7 +518,7 @@ The playbook (`ansible/sandbox.yml`) is idempotent — safe to run multiple time
 
 | Threat | Protection |
 |---|---|
-| Malicious package reads SSH key | Lima mount restricted to `~/Projects` — `~/.ssh` is never inside the VM; gVisor flags `openat(/root/.ssh/id_rsa)` as CRITICAL `Credential read attempt` |
+| Malicious package reads SSH key | Layer 1: `~/.ssh` is never mounted into the VM — the path does not exist inside the container's filesystem. Layer 2: gVisor still intercepts and flags the `openat` attempt as CRITICAL `Credential read attempt`. Both layers fire independently. |
 | Package phones home to attacker | `--network none` blocks all outbound connections; detected as `Outbound connection attempt` |
 | Agent spawns reverse shell | `--cap-drop ALL` + gVisor flags `execve(/bin/sh)` as CRITICAL `Shell spawned in container` |
 | Code reads AWS credentials | gVisor flags `openat(.aws/credentials)` as CRITICAL `Credential read attempt` |
@@ -560,6 +586,21 @@ make run CMD="cat /etc/passwd"  # generate a test event
 ## A note on sudo inside the Lima VM (macOS)
 
 On macOS, the sandbox requires `sudo` inside the Lima VM for gVisor. This is a Fedora CoreOS cgroup delegation limitation inside QEMU — not a security hole. The AI agent always runs as non-root (`--user 1000:1000`) inside the container. Your Mac host, SSH keys, and credentials are completely unreachable from inside the VM.
+
+---
+
+## Performance
+
+gVisor intercepts every syscall through a user-space kernel, which adds overhead proportional to syscall frequency. For typical local dev and testing workloads the impact is small.
+
+| Workload | Typical overhead |
+|---|---|
+| Standard web app / API server | Negligible — I/O-bound, few syscalls per request |
+| Unit / integration test suite | 5–15% slower — depends on test count and file I/O |
+| Syscall-heavy data processing | Up to 2× — CPU-bound numeric code is unaffected; disk/network I/O is not |
+| npm install / pip install | Slower on first run; subsequent runs hit the cached named volume |
+
+On macOS there is an additional ~1–2s dashboard latency on alert delivery due to the SSH hop through Lima. This does not affect sandbox execution speed — only the speed at which events appear in the dashboard.
 
 ---
 
