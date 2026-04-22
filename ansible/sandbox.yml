@@ -16,6 +16,10 @@
     # Only this directory (and /tmp/lima) is mounted into the Lima VM.
     # Set to a parent that covers all projects you sandbox — never set to $HOME.
     sandbox_projects_dir: "{{ ansible_env.HOME }}/Projects"
+    # Pin to a specific gVisor release for reproducibility and supply-chain safety.
+    # Find releases at: https://github.com/google/gvisor/releases
+    # Example pin: "release/20260413.0"
+    runsc_release: "release/latest"
 
   tasks:
 
@@ -103,8 +107,19 @@
 
     - name: "[macOS] Install runsc"
       shell: |
-        limactl shell podman -- sudo bash -c \
-          'command -v runsc || (curl -fsSL https://storage.googleapis.com/gvisor/releases/release/latest/aarch64/runsc -o /tmp/runsc && install -m 755 /tmp/runsc /usr/bin/runsc)'
+        limactl shell podman -- sudo bash -c '
+          if command -v runsc > /dev/null 2>&1; then exit 0; fi
+          BASE="https://storage.googleapis.com/gvisor/releases/{{ runsc_release }}/aarch64"
+          curl -fsSL "${BASE}/runsc"        -o /tmp/runsc
+          curl -fsSL "${BASE}/runsc.sha512" -o /tmp/runsc.sha512
+          cd /tmp && sha512sum -c runsc.sha512 || {
+            rm -f /tmp/runsc /tmp/runsc.sha512
+            echo "ERROR: runsc SHA512 verification failed — binary not installed" >&2
+            exit 1
+          }
+          install -m 755 /tmp/runsc /usr/bin/runsc
+          rm -f /tmp/runsc /tmp/runsc.sha512
+        '
       changed_when: false
       when: is_macos
 
@@ -183,11 +198,18 @@
 
     - name: "[Linux] Install runsc"
       shell: |
+        if command -v runsc > /dev/null 2>&1; then exit 0; fi
         ARCH=$(uname -m)
-        command -v runsc || (
-          curl -fsSL https://storage.googleapis.com/gvisor/releases/release/latest/${ARCH}/runsc \
-            -o /tmp/runsc && install -m 755 /tmp/runsc /usr/bin/runsc
-        )
+        BASE="https://storage.googleapis.com/gvisor/releases/{{ runsc_release }}/${ARCH}"
+        curl -fsSL "${BASE}/runsc"        -o /tmp/runsc
+        curl -fsSL "${BASE}/runsc.sha512" -o /tmp/runsc.sha512
+        cd /tmp && sha512sum -c runsc.sha512 || {
+          rm -f /tmp/runsc /tmp/runsc.sha512
+          echo "ERROR: runsc SHA512 verification failed — binary not installed" >&2
+          exit 1
+        }
+        install -m 755 /tmp/runsc /usr/bin/runsc
+        rm -f /tmp/runsc /tmp/runsc.sha512
       become: true
       changed_when: false
       when: is_linux

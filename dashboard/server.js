@@ -33,6 +33,26 @@ function isAllowlisted(dest) {
   return [...BUILTIN_ALLOWLIST, ...ALLOWLIST].some(entry => d.includes(entry));
 }
 
+// Strip ANSI escape sequences and non-printable control characters, then cap length.
+// Applied to every field before broadcast so log-injected content can't reach the UI.
+const ANSI_RE = /\x1b\[[0-9;]*[a-zA-Z]/g;
+const CTRL_RE = /[\x00-\x08\x0b-\x1f\x7f]/g;
+
+function sanitizeStr(str, maxLen) {
+  if (typeof str !== 'string') str = String(str == null ? '' : str);
+  return str.replace(ANSI_RE, '').replace(CTRL_RE, '').slice(0, maxLen);
+}
+
+function sanitizeAlert(alert) {
+  return {
+    time:     sanitizeStr(alert.time,     64),
+    priority: sanitizeStr(alert.priority, 16),
+    rule:     sanitizeStr(alert.rule,     128),
+    detail:   sanitizeStr(alert.detail,   256),
+    source:   sanitizeStr(alert.source,   32),
+  };
+}
+
 const server = http.createServer((req, res) => {
   if (req.url === '/' || req.url === '/index.html') {
     const filePath = path.join(__dirname, 'index.html');
@@ -53,10 +73,45 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocket.Server({ server });
 
+// Noise suppression: high-volume INFO events from these path prefixes are
+// allowed through SUPPRESS_THRESHOLD times per window, then collapsed into
+// a single summary broadcast at the end of each window.
+const NOISY_PREFIXES = ['/app/node_modules/', '/tmp/', '/app/.sandbox-'];
+const SUPPRESS_THRESHOLD = 5;
+const SUPPRESS_WINDOW_MS = 10000;
+const _suppressCounts = new Map();
+
+setInterval(() => {
+  let total = 0;
+  _suppressCounts.forEach(v => { total += v; });
+  if (total > 0) {
+    broadcast({
+      time: new Date().toISOString(),
+      priority: 'INFO',
+      rule: 'Noise suppressed',
+      detail: `${total} repetitive file-read events hidden (node_modules / tmp)`,
+      source: 'system',
+    });
+  }
+  _suppressCounts.clear();
+}, SUPPRESS_WINDOW_MS);
+
+function shouldSuppress(alert) {
+  if (alert.priority !== 'INFO') return false;
+  const detail = alert.detail || '';
+  const prefix = NOISY_PREFIXES.find(p => detail.startsWith(p));
+  if (!prefix) return false;
+  const count = (_suppressCounts.get(prefix) || 0) + 1;
+  _suppressCounts.set(prefix, count);
+  return count > SUPPRESS_THRESHOLD;
+}
+
 function broadcast(data) {
+  if (shouldSuppress(data)) return;
+  const safe = sanitizeAlert(data);
   wss.clients.forEach(client => {
     if (client.readyState === WebSocket.OPEN) {
-      client.send(JSON.stringify(data));
+      client.send(JSON.stringify(safe));
     }
   });
 }

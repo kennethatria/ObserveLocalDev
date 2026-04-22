@@ -17,7 +17,6 @@ AI agents accelerate coding, but the code they help produce can introduce unexpe
 Don't just trust what the agent wrote. Observe what it does when it runs.
 
 This project is built on the belief that **developers deserve the same observability on their local machines that production environments take for granted.**
-
 ---
 
 ## How it works
@@ -225,6 +224,22 @@ sandbox node index.js
 
 This means you have a complete audit trail of everything the AI agent's code does — which files it reads, whether it tries to make network calls, whether it spawns unexpected processes.
 
+### Safe mode — read-only mount for exploratory runs
+
+When auditing an unfamiliar package, reviewing code you didn't write, or running anything where you want zero write risk, use `SANDBOX_SAFE=1`. The project is mounted `:ro` — nothing inside the container can modify your files. Dependency installs still work (they write to named volumes, not the project directory).
+
+```bash
+# Audit a package before trusting it
+SANDBOX_SAFE=1 sandbox node index.js
+
+# Set for a whole session
+export SANDBOX_SAFE=1
+sandbox npm test
+sandbox node index.js
+```
+
+The post-run summary shows `Mode: safe (read-only mount)` and omits the file-write section — writes are physically blocked at the mount level, not just detected.
+
 ### Claude Code
 
 Claude Code is the AI agent this project was built to contain. Run it from inside your project directory and use `sandbox` to execute anything it generates:
@@ -272,6 +287,31 @@ A caught attack:
 [CRITICAL] Shell spawned in container
 ```
 
+A parting-gift attack caught at the terminal (post-run summary):
+```
+─── Sandbox summary ─────────────────────
+  Files read       87
+  Files written     3
+  Processes         2
+  Network           0  outbound attempts
+──────────────────────────────────────────
+
+  Files written to your project:
+    src/index.js
+    package.json                               ⚠ sensitive project file
+    scripts/deploy.sh                          ⚠ sensitive project file
+──────────────────────────────────────────
+```
+
+With `SANDBOX_APPROVE_WRITES=1`, the session pauses before exit:
+```
+  ⚠  Sensitive project files were modified inside the sandbox.
+     Keep these changes? [y/N]
+  Restored: package.json
+  Restored: scripts/deploy.sh
+  Changes reverted.
+```
+
 You learn to tell the difference very quickly.
 
 ---
@@ -309,6 +349,8 @@ Every syscall made by the container is intercepted and logged. gVisor acts as a 
 --network none                      # no outbound access (default)
 --memory 2g                         # prevent runaway memory usage
 --cpus 2.0                          # prevent CPU exhaustion
+--volume $PROJECT:/app:rw           # default — writes detected and reported
+--volume $PROJECT:/app:ro           # SANDBOX_SAFE=1 — writes physically blocked
 ```
 
 ### Layer 4 — Observability
@@ -348,6 +390,12 @@ make dashboard
 ```
 
 Shows live alerts, syscall activity, container events, and blocked network attempts. Fed by a Node.js WebSocket server that auto-detects your OS and tails the appropriate log sources.
+
+**Noise suppression** — high-volume INFO events from `node_modules`, `/tmp`, and `.sandbox-*` paths are allowed through 5 times per 10s window, then collapsed into a single "N events suppressed" summary. This prevents routine dependency reads from burying real threats in the feed.
+
+**Hide noise toggle** — the "Hide noise" button in the feed header dims or hides already-received noisy rows without affecting CRITICAL or WARNING events.
+
+**CRITICAL alert persistence** — CRITICAL rows have a full red background and are exempt from the 150-item feed cap. When the feed overflows, only non-CRITICAL rows are evicted, so threats stay visible regardless of INFO volume.
 
 ### Alert format
 
@@ -404,6 +452,8 @@ observeLocalDev/
 | `SANDBOX_ALLOWLIST` | _(unset)_ | Comma-separated domains/IPs marked safe in the dashboard (e.g. `registry.npmjs.org,github.com`). Allowlisted connections show green; all others show yellow. Built-in safe list covers npm, PyPI, GitHub, localhost. |
 | `SANDBOX_MEMORY` | `2g` | Memory limit for the sandbox container. Increase for heavy workloads (e.g. `SANDBOX_MEMORY=4g`). |
 | `SANDBOX_CPUS` | `2.0` | CPU limit for the sandbox container (e.g. `SANDBOX_CPUS=4.0`). |
+| `SANDBOX_APPROVE_WRITES` | _(unset)_ | Set to `1` to enable an interactive approval gate after each run. If a sensitive project file (`Makefile`, `package.json`, shell scripts, Dockerfiles, CI configs) was written inside the sandbox, you will be prompted to keep or revert the changes before the session exits. |
+| `SANDBOX_SAFE` | _(unset)_ | Set to `1` to enable safe mode — the project directory is mounted read-only (`:ro`). Nothing inside the container can write to your project files. Use for exploratory runs, auditing unfamiliar code, or any time you want pure observation with zero write risk. Dependency installs still work (they write to named volumes, not the project). |
 
 **Ansible-only variables** (set in `ansible/sandbox.yml` or via `-e` at runtime):
 
@@ -450,7 +500,10 @@ The playbook (`ansible/sandbox.yml`) is idempotent — safe to run multiple time
 | Secret file access | `openat(.env)`, `secrets.json`, `credentials.yaml`, `.netrc` flagged as CRITICAL `Env file access` |
 | Sensitive path access | Any path containing `KEY`, `SECRET`, `TOKEN`, `PASSWORD` flagged as WARNING `Sensitive path access` |
 | Write to sensitive directory | `openat(.ssh/…)`, `/etc/…`, `/root/…` with write flags flagged as CRITICAL `Sensitive file write` |
+| Parting-gift attack (project file poisoning) | Post-run summary lists every file written to `/app/`; `Makefile`, `package.json`, shell scripts, Dockerfiles, and CI configs flagged as sensitive; `SANDBOX_APPROVE_WRITES=1` prompts to revert before the session exits |
+| Log injection / dashboard XSS via crafted filenames | `server.js` strips ANSI escape sequences and control characters from all alert fields and enforces length caps before broadcast; `index.html` HTML-escapes all rendered data |
 | Runtime package install | Falco (Linux) or parse-alerts.sh (macOS) fires alert |
+| Tampered or substituted `runsc` binary | `ansible/sandbox.yml` verifies SHA512 of the downloaded binary against gVisor's published checksum before installing; aborts `make setup` on mismatch; `runsc_release` var pins to a specific release |
 
 ---
 

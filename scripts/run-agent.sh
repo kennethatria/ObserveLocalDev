@@ -11,6 +11,17 @@ RUNSC_LOG="/var/log/runsc/current.log"
 SANDBOX_MEMORY=${SANDBOX_MEMORY:-2g}
 SANDBOX_CPUS=${SANDBOX_CPUS:-2.0}
 
+# Safe mode: mount the project read-only so nothing inside the container can
+# modify host files. Dependency installs still work (they write to named volumes,
+# not the project dir). Use for exploratory runs where you want pure observation.
+SANDBOX_SAFE=${SANDBOX_SAFE:-0}
+if [[ "$SANDBOX_SAFE" == "1" ]]; then
+  PROJECT_MOUNT_MODE="ro"
+  echo "[sandbox] SAFE MODE — project mounted read-only, writes blocked"
+else
+  PROJECT_MOUNT_MODE="rw"
+fi
+
 # ---------------------------------------------------------------------------
 # Warm standby: ensure the sandbox runtime is ready before running a command
 # ---------------------------------------------------------------------------
@@ -84,7 +95,7 @@ podman_run_install() {
       --runtime runsc --user 1000:1000 --cap-drop ALL \
       --security-opt no-new-privileges --network none \
       --memory="$SANDBOX_MEMORY" --cpus="$SANDBOX_CPUS" \
-      --volume "$PROJECT:/app:rw" $extra_volumes \
+      --volume "$PROJECT:/app:${PROJECT_MOUNT_MODE}" $extra_volumes \
       --workdir /app --runtime-flag=ignore-cgroups \
       $IMAGE sh -c "$cmd"
   else
@@ -92,7 +103,7 @@ podman_run_install() {
       --runtime runsc --user 1000:1000 --cap-drop ALL \
       --security-opt no-new-privileges --network none \
       --memory="$SANDBOX_MEMORY" --cpus="$SANDBOX_CPUS" \
-      --volume "$PROJECT:/app:rw" $extra_volumes \
+      --volume "$PROJECT:/app:${PROJECT_MOUNT_MODE}" $extra_volumes \
       --workdir /app --runtime-flag=ignore-cgroups \
       $IMAGE sh -c "$cmd"
   fi
@@ -149,6 +160,49 @@ if [[ -f "$PROJECT/go.mod" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Parting-gift protection: snapshot sensitive project files before the run.
+# After the run we diff the snapshot to detect modifications made from inside
+# the container. SANDBOX_APPROVE_WRITES=1 adds an interactive approval gate.
+# ---------------------------------------------------------------------------
+SENSITIVE_PATTERNS=( "Makefile" "GNUmakefile" "package.json" "requirements.txt"
+  "go.mod" "go.sum" "Pipfile" "pyproject.toml" "*.sh"
+  "Dockerfile" "Dockerfile.*" "docker-compose.yml" "docker-compose.*.yml" )
+
+is_sensitive_file() {
+  local base
+  base="$(basename "$1")"
+  local pat
+  for pat in "${SENSITIVE_PATTERNS[@]}"; do
+    # shellcheck disable=SC2254
+    case "$base" in $pat) return 0 ;; esac
+  done
+  # Anything under .github/
+  [[ "$1" == ".github/"* ]] && return 0
+  return 1
+}
+
+if [[ "$SANDBOX_SAFE" != "1" ]]; then
+  SNAPSHOT_DIR=$(mktemp -d /tmp/sandbox-snapshot-XXXXXX)
+
+  find_sensitive() {
+    find "$PROJECT" -maxdepth 4 \( \
+      -name "Makefile" -o -name "GNUmakefile" -o \
+      -name "package.json" -o -name "requirements.txt" -o \
+      -name "go.mod" -o -name "go.sum" -o -name "Pipfile" -o -name "pyproject.toml" -o \
+      -name "*.sh" -o \
+      -name "Dockerfile" -o -name "Dockerfile.*" -o \
+      -name "docker-compose.yml" -o -name "docker-compose.*.yml" \
+    \) ! -path "*/node_modules/*" ! -path "*/.git/*" -print 2>/dev/null
+  }
+
+  while IFS= read -r f; do
+    rel="${f#$PROJECT/}"
+    mkdir -p "$SNAPSHOT_DIR/$(dirname "$rel")"
+    cp "$f" "$SNAPSHOT_DIR/$rel" 2>/dev/null
+  done < <(find_sensitive)
+fi
+
+# ---------------------------------------------------------------------------
 # Network mode:
 #   default              → --network none (fully isolated)
 #   SANDBOX_PORT=3000    → publish port 3000, inbound only
@@ -184,7 +238,7 @@ if [[ "$OS" == "Darwin" ]]; then
     --memory="$SANDBOX_MEMORY" \
     --cpus="$SANDBOX_CPUS" \
     $NETWORK_FLAGS \
-    --volume "$PROJECT:/app:rw" \
+    --volume "$PROJECT:/app:${PROJECT_MOUNT_MODE}" \
     $NM_VOLUME_FLAG \
     $PY_VOLUME_FLAG $PY_ENV_FLAG \
     $GO_VOLUME_FLAG \
@@ -205,7 +259,7 @@ else
     --memory="$SANDBOX_MEMORY" \
     --cpus="$SANDBOX_CPUS" \
     $NETWORK_FLAGS \
-    --volume "$PROJECT:/app:rw" \
+    --volume "$PROJECT:/app:${PROJECT_MOUNT_MODE}" \
     $NM_VOLUME_FLAG \
     $PY_VOLUME_FLAG $PY_ENV_FLAG \
     $GO_VOLUME_FLAG \
@@ -238,11 +292,89 @@ NETWORK=$(echo "$SESSION_LINES"        | grep -c 'connect.*SOCK_STREAM' 2>/dev/n
 
 echo ""
 echo "─── Sandbox summary ─────────────────────"
+if [[ "$SANDBOX_SAFE" == "1" ]]; then
+  printf "  Mode           safe (read-only mount)\n"
+fi
 printf "  Files read     %4d\n" "$FILES_READ"
-printf "  Files written  %4d\n" "$FILES_WRITTEN"
+if [[ "$SANDBOX_SAFE" != "1" ]]; then
+  printf "  Files written  %4d\n" "$FILES_WRITTEN"
+fi
 if [[ "$SENSITIVE" -gt 0 ]]; then
   printf "  Sensitive      %4d  ⚠ review dashboard\n" "$SENSITIVE"
 fi
 printf "  Processes      %4d\n" "$PROCESSES"
 printf "  Network        %4d  outbound attempts\n" "$NETWORK"
 echo "──────────────────────────────────────────"
+
+# ---------------------------------------------------------------------------
+# Parting-gift protection: show written project paths + flag sensitive changes.
+# Skipped in safe mode — the read-only mount makes writes impossible.
+# ---------------------------------------------------------------------------
+if [[ "$SANDBOX_SAFE" != "1" ]]; then
+
+  # Extract all paths written inside /app/ during this run from gVisor strace
+  WRITTEN_PATHS=$(echo "$SESSION_LINES" \
+    | grep -E 'openat.*(O_WRONLY|O_RDWR|O_CREAT|O_TRUNC)' \
+    | sed -n 's/.*openat[^"]*"\([^"]*\)".*/\1/p' \
+    | grep '^/app/' \
+    | sed 's|^/app/||' \
+    | sort -u)
+
+  # Detect which sensitive files were modified or newly created
+  MODIFIED_SENSITIVE=()
+  CREATED_SENSITIVE=()
+  if [[ -n "$WRITTEN_PATHS" ]]; then
+    while IFS= read -r rel; do
+      is_sensitive_file "$rel" || continue
+      if [[ -f "$SNAPSHOT_DIR/$rel" ]]; then
+        diff -q "$SNAPSHOT_DIR/$rel" "$PROJECT/$rel" &>/dev/null || MODIFIED_SENSITIVE+=("$rel")
+      else
+        CREATED_SENSITIVE+=("$rel")
+      fi
+    done <<< "$WRITTEN_PATHS"
+  fi
+
+  # Build a lookup set of sensitive paths for display annotation
+  declare -A SENSITIVE_LOOKUP
+  for rel in "${MODIFIED_SENSITIVE[@]}" "${CREATED_SENSITIVE[@]}"; do
+    SENSITIVE_LOOKUP["$rel"]=1
+  done
+
+  if [[ -n "$WRITTEN_PATHS" ]]; then
+    echo ""
+    echo "  Files written to your project:"
+    while IFS= read -r rel; do
+      if [[ "${SENSITIVE_LOOKUP[$rel]:-0}" == "1" ]]; then
+        printf "    %-42s ⚠ sensitive project file\n" "$rel"
+      else
+        printf "    %s\n" "$rel"
+      fi
+    done <<< "$WRITTEN_PATHS"
+    echo "──────────────────────────────────────────"
+  fi
+
+  # Approval gate — only active when SANDBOX_APPROVE_WRITES=1
+  if [[ "${SANDBOX_APPROVE_WRITES:-0}" == "1" ]] \
+     && [[ ${#MODIFIED_SENSITIVE[@]} -gt 0 || ${#CREATED_SENSITIVE[@]} -gt 0 ]]; then
+    echo ""
+    echo "  ⚠  Sensitive project files were modified inside the sandbox."
+    echo "     Keep these changes? [y/N]"
+    read -r _response </dev/tty
+    if [[ ! "$_response" =~ ^[Yy]$ ]]; then
+      for rel in "${MODIFIED_SENSITIVE[@]}"; do
+        cp "$SNAPSHOT_DIR/$rel" "$PROJECT/$rel"
+        echo "  Restored: $rel"
+      done
+      for rel in "${CREATED_SENSITIVE[@]}"; do
+        rm -f "$PROJECT/$rel"
+        echo "  Removed:  $rel"
+      done
+      echo "  Changes reverted."
+    else
+      echo "  Changes kept."
+    fi
+  fi
+
+  rm -rf "$SNAPSHOT_DIR"
+
+fi

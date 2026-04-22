@@ -144,9 +144,12 @@
     to   { opacity: 1; transform: translateY(0); }
   }
   .alert-item:hover { background: var(--surface2); }
-  .alert-item.CRITICAL { border-left: 3px solid var(--critical); }
+  .alert-item.CRITICAL { border-left: 3px solid var(--critical); background: var(--critical-bg); }
   .alert-item.WARNING  { border-left: 3px solid var(--warning); }
   .alert-item.INFO     { border-left: 3px solid var(--info); }
+
+  .alert-item[data-noisy] { opacity: 0.45; }
+  .hide-noise .alert-item[data-noisy] { display: none; }
 
   /* ── Badges ── */
   .alert-badge {
@@ -278,6 +281,7 @@
         <button class="filter-btn process"   onclick="setFilter('PROCESS', this)">Process</button>
         <button class="filter-btn network"   onclick="setFilter('NETWORK', this)">Network</button>
         <button class="filter-btn container" onclick="setFilter('CONTAINER', this)">Container</button>
+        <button class="btn" id="noise-btn" onclick="toggleNoise()">Hide noise</button>
       </div>
     </div>
     <div class="feed" id="alert-feed">
@@ -321,7 +325,25 @@ var fileCounts = {};
 var paused = false;
 var currentFilter = 'ALL';
 var maxAlerts = 150;
+var hideNoise = false;
 var ws;
+
+var NOISY_PREFIXES_CLIENT = ['/app/node_modules/', '/tmp/', '/app/.sandbox-'];
+
+function isNoisyAlert(alert) {
+  if ((alert.priority || 'INFO').toUpperCase() !== 'INFO') return false;
+  var detail = alert.detail || '';
+  return NOISY_PREFIXES_CLIENT.some(function(p) { return detail.indexOf(p) === 0; });
+}
+
+function toggleNoise() {
+  hideNoise = !hideNoise;
+  document.getElementById('alert-feed').classList.toggle('hide-noise', hideNoise);
+  var btn = document.getElementById('noise-btn');
+  btn.textContent = hideNoise ? 'Show noise' : 'Hide noise';
+  btn.style.borderColor = hideNoise ? 'var(--warning)' : '';
+  btn.style.color       = hideNoise ? 'var(--warning)' : '';
+}
 
 function getActivityType(alert) {
   var rule = (alert.rule || '').toLowerCase();
@@ -401,6 +423,7 @@ function addAlertRow(alert, priority) {
   var item = document.createElement('div');
   item.className = 'alert-item ' + priority;
   item.setAttribute('data-type', getActivityType(alert));
+  if (isNoisyAlert(alert)) item.setAttribute('data-noisy', '1');
   item.innerHTML =
     '<span class="alert-badge badge-' + priority + '">' + priority + '</span>' +
     '<div class="alert-body">' +
@@ -411,8 +434,17 @@ function addAlertRow(alert, priority) {
     '<span class="alert-time">' + formatTime(alert.time) + '</span>';
 
   feed.insertBefore(item, feed.firstChild);
+
+  // When trimming, evict the oldest non-CRITICAL item so CRITICAL alerts persist.
   var items = feed.querySelectorAll('.alert-item');
-  if (items.length > maxAlerts) items[items.length - 1].remove();
+  if (items.length > maxAlerts) {
+    for (var i = items.length - 1; i >= 0; i--) {
+      if (!items[i].classList.contains('CRITICAL')) {
+        items[i].remove();
+        break;
+      }
+    }
+  }
 }
 
 function updateFileBar(alert, priority) {
